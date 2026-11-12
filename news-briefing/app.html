@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Puppet Feeds Local</title>
+<meta name="description" content="Pick your topics - chips, crypto, AI, markets and more - and get one briefing that connects them, plus a live community audio room.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gochi+Hand&family=Comic+Neue:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: header with topic toggles, the briefing in the main column, the merged news list beside it. */
+:root{
+  --bg:#fffdf6; --panel:#ffffff; --ink:#111111; --muted:#4a4a4a; --line:#111111;
+  --accent:#f7931a; --accent-ink:#111111; --chip:#ffe14d; --sky:#7fd3ff; --bad:#d4130f; --good:#1f8a3b;
+  --stroke:#111111; --shadow:#111111; --dots:#e9e2cf;
+  --display:"Gochi Hand","Comic Sans MS","Comic Neue",cursive;
+  --body:"Comic Neue","Comic Sans MS",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --wobble:255px 18px 225px 18px/18px 225px 18px 255px;
+  --wobble2:18px 225px 18px 255px/255px 18px 225px 18px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#15130f; --panel:#1f1c16; --ink:#fff8e6; --muted:#d6ccb4; --line:#fff8e6;
+  --accent:#f7931a; --accent-ink:#111111; --chip:#ffd21f; --sky:#4fb8ec; --bad:#ff7a6e; --good:#6fdc8c;
+  --stroke:#fff8e6; --shadow:#f7931a; --dots:#2a261d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#15130f; --panel:#1f1c16; --ink:#fff8e6; --muted:#d6ccb4; --line:#fff8e6;
+  --accent:#f7931a; --accent-ink:#111111; --chip:#ffd21f; --sky:#4fb8ec; --bad:#ff7a6e; --good:#6fdc8c;
+  --stroke:#fff8e6; --shadow:#f7931a; --dots:#2a261d; color-scheme:dark}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg) radial-gradient(var(--dots) 1.5px,transparent 1.6px) 0 0/22px 22px;color:var(--ink);font:16px/1.5 var(--body)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:inherit}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+
+header{background:var(--accent);border-bottom:4px solid var(--stroke);color:#111}
+header .wrap{padding-block:18px;display:flex;flex-direction:column;gap:14px}
+.brand{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand h1{font:400 44px/1 var(--display);margin:0;transform:rotate(-1.5deg)}
+.brand span{font-weight:700;font-size:14px}
+.mascot{width:76px;height:76px;flex:none;display:block;animation:bob 2.6s ease-in-out infinite;transform-origin:50% 100%}
+.mascot img,.mascot svg{width:100%;height:100%;object-fit:cover;display:block}
+@keyframes bob{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(6deg) translateY(-3px)}}
+header .mascot{border:3px solid #111;border-radius:var(--wobble);box-shadow:4px 4px 0 #111;overflow:hidden;width:84px;height:84px}
+
+.btn{border:3px solid var(--stroke);background:var(--chip);color:#111;border-radius:var(--wobble2);box-shadow:3px 3px 0 var(--shadow);font:400 19px var(--display);padding:6px 16px;transition:transform .08s}
+.btn:hover{transform:translate(-1px,-1px) rotate(-1deg)}
+.btn:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--shadow)}
+.btn:disabled{opacity:.6;cursor:default;transform:none}
+.btn.primary{background:var(--accent);color:#111}
+header .btn.primary{background:#fff;color:#111;border-color:#111;box-shadow:3px 3px 0 #111}
+.tag{font:500 11px var(--mono);text-transform:uppercase;letter-spacing:.06em;padding:1px 6px;border-radius:4px;border:2px solid var(--stroke);background:var(--sky);color:#111;white-space:nowrap}
+.tag.v{background:var(--accent);color:#111}
+.empty{color:var(--muted);font-size:14px}
+.section-h{font:400 26px/1 var(--display);color:var(--ink);transform:rotate(-1deg);margin:0 0 12px}
+
+/* topic toggles */
+.topicbar{display:flex;flex-direction:column;gap:8px}
+.topicbar .hint{font-weight:700;font-size:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:baseline}
+.topics{display:flex;gap:8px;flex-wrap:wrap}
+.topic{border:2px solid #111;background:#fff;color:#111;font-weight:700;font-size:14px;border-radius:var(--wobble);box-shadow:2px 2px 0 #111;padding:6px 12px;display:inline-flex;gap:6px;align-items:center}
+.topic[aria-pressed="true"]{background:#111;color:#fff;box-shadow:2px 2px 0 #fff}
+.topic[aria-pressed="true"]::after{content:"✓";font-size:12px}
+.topic:disabled{opacity:.45;cursor:not-allowed}
+.topic:not(:disabled):active{transform:translate(2px,2px);box-shadow:none}
+
+main .wrap{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:28px;padding-block:24px 40px;align-items:start}
+@media (max-width:900px){main .wrap{grid-template-columns:1fr}}
+
+.panel{background:var(--panel);border:3px solid var(--stroke);border-radius:var(--wobble);box-shadow:6px 6px 0 var(--shadow);padding:20px}
+.status{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--panel);border:3px dashed var(--stroke);border-radius:var(--wobble);font-weight:700}
+.status .mascot{width:54px;height:54px;border:2px solid var(--stroke);border-radius:var(--wobble2);overflow:hidden}
+.status.err{color:var(--bad)}
+
+/* briefing */
+.brief-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font:12px var(--mono);color:var(--muted);margin-bottom:10px}
+.brief h2{font:400 40px/1.05 var(--display);margin:0 0 12px;text-wrap:balance}
+.overview{font-size:18px;margin:0 0 16px}
+.prices{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.price{font:500 13px var(--mono);border:2px solid var(--stroke);border-radius:var(--wobble2);padding:3px 10px;background:var(--bg)}
+.up{color:var(--good)} .down{color:var(--bad)}
+.moods{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-bottom:22px}
+.mood{border:2px solid var(--stroke);border-radius:var(--wobble2);padding:8px 10px;background:var(--bg);font-size:14px}
+.mood b{display:flex;justify-content:space-between;gap:6px;margin-bottom:2px}
+.tone{font:500 11px var(--mono);text-transform:uppercase;padding:1px 6px;border-radius:4px;border:2px solid var(--stroke)}
+.tone.positive{background:#b7f5c8;color:#111} .tone.negative{background:#ffb4ab;color:#111}
+.tone.mixed{background:var(--chip);color:#111} .tone.quiet{background:var(--panel)}
+.brief h3{font:400 28px/1 var(--display);margin:24px 0 12px;transform:rotate(-1deg)}
+.thread,.scenario{border-top:2px dashed var(--stroke);padding:12px 0}
+.thread h4,.scenario h4{margin:0 0 4px;font-size:17px;line-height:1.3}
+.thread p,.scenario p{margin:0 0 6px}
+.tags{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:6px}
+.ref{font:500 11px var(--mono);text-decoration:none;border:1.5px solid var(--stroke);border-radius:4px;padding:0 4px;background:var(--bg)}
+.ref:hover{background:var(--chip);color:#111}
+.lik{font:500 11px var(--mono);text-transform:uppercase;padding:1px 6px;border:2px solid var(--stroke);border-radius:4px}
+.lik.high{background:var(--accent);color:#111} .lik.medium{background:var(--chip);color:#111} .lik.low{background:var(--panel)}
+.scenario .when{font:12px var(--mono);color:var(--muted)}
+.signals{margin:4px 0 0;padding-left:20px;font-size:14px;color:var(--muted)}
+.upcoming{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.upcoming li{display:flex;gap:10px}
+.upcoming b{font:500 12px var(--mono);min-width:92px;padding-top:3px}
+.disclaimer{margin:22px 0 0;font-size:13px;color:var(--muted);border-top:3px dashed var(--stroke);padding-top:10px}
+.skeleton{height:14px;border-radius:6px;background:linear-gradient(90deg,var(--dots),var(--panel),var(--dots));background-size:200% 100%;animation:shimmer 1.4s infinite;margin:10px 0}
+@keyframes shimmer{to{background-position:-200% 0}}
+
+/* news list */
+.feedbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.filt{border:2px solid var(--stroke);background:var(--panel);border-radius:var(--wobble2);padding:2px 10px;font:700 13px var(--body);box-shadow:2px 2px 0 var(--shadow)}
+.filt[aria-pressed="true"]{background:var(--chip);color:#111}
+.stories{display:flex;flex-direction:column}
+.story{padding:11px 0;border-top:2px dashed var(--stroke)}
+.story a.t{font-weight:700;text-decoration:none;line-height:1.35;display:block}
+.story a.t:hover{text-decoration:underline wavy var(--accent)}
+.story .info{font:12px var(--mono);color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;align-items:center}
+.story.x a.t::before{content:"⇄ ";color:var(--accent)}
+.story.hi{background:var(--chip);color:#111;margin:0 -8px;padding-inline:8px;border-radius:8px}
+.story.hi .info{color:#111}
+.more-btn{margin-top:12px}
+
+footer{border-top:3px dashed var(--stroke)}
+footer .wrap{padding-block:16px;font-size:13px;color:var(--muted)}
+footer b{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* local AI bar */
+.aibar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;padding:10px 12px;border:2px dashed var(--stroke);border-radius:var(--wobble2);font-weight:700;font-size:14px}
+.aibar select{border:2px solid var(--stroke);border-radius:8px;background:var(--bg);padding:4px 8px;max-width:100%;min-width:0;font:600 14px var(--body)}
+.aibar .grow{flex:1}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;border:2px solid var(--stroke);background:#999;margin-right:6px;vertical-align:middle}
+.dot.on{background:#2ecc71}
+.intro p{margin:0 0 10px}
+.intro ol{margin:0 0 6px;padding-left:22px}
+.quit{margin-left:auto;background:#fff;color:#111;border-color:#111;box-shadow:3px 3px 0 #111}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand">
+    <span class="mascot" id="mascot" aria-hidden="true"></span>
+    <h1>Puppet Feeds</h1><span>Your topics, one briefing - written by the AI on your own computer.</span>
+    <button class="btn quit" type="button" id="quitBtn" title="Stop the app">Close app</button>
+  </div>
+  <div class="topicbar">
+    <div class="hint">Pick your topics <span id="topicCount"></span></div>
+    <div class="topics" id="topics" role="group" aria-label="Topics"></div>
+  </div>
+</div></header>
+
+<main><div class="wrap">
+  <section aria-label="Briefing">
+    <div class="aibar" id="aibar"></div>
+    <div class="panel brief" id="brief"></div>
+  </section>
+  <section aria-label="Latest news">
+    <h2 class="section-h">The feed</h2>
+    <div class="feedbar" id="feedbar"></div>
+    <div class="stories" id="stories"></div>
+  </section>
+</div></main>
+
+<footer><div class="wrap">
+  <b>Puppet Feeds Local</b> - a community derivative of Bitcoin Puppets, shared under the VPL. Headlines via Google News; prices via CoinGecko;
+  briefings written by your own local AI model (LM Studio or Ollama). Scenarios, not predictions - nothing here is financial advice.
+</div></footer>
+
+<script>
+/* ===== Mascot =====
+   To use a real Puppet: paste an image link (or a data: URI) between the quotes below.
+   Leave it empty to keep the hand-drawn doodle. */
+const PUPPET_IMAGE = "data:image/webp;base64,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";
+
+const PUPPET_SVG = `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M30 96 C28 80 32 70 36 64 L64 64 C68 72 71 82 70 96 Z" fill="#7fd3ff" stroke="#111" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M36 80 L64 79 M35 88 L66 88" stroke="#111" stroke-width="2.5" fill="none" stroke-dasharray="4 4"/>
+  <path d="M50 8 C74 6 88 22 86 42 C85 60 70 70 50 69 C28 70 13 58 14 40 C14 20 28 9 50 8 Z" fill="#f7931a" stroke="#111" stroke-width="4"/>
+  <path d="M22 18 C14 8 6 12 9 22 M78 18 C86 8 94 12 91 22" stroke="#111" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <ellipse cx="36" cy="34" rx="9" ry="10" fill="#fff" stroke="#111" stroke-width="3"/>
+  <ellipse cx="63" cy="33" rx="7" ry="9" fill="#fff" stroke="#111" stroke-width="3"/>
+  <circle cx="38" cy="36" r="4" fill="#111"/><circle cx="61" cy="35" r="3.5" fill="#111"/>
+  <path d="M30 50 C40 62 60 62 72 48" stroke="#111" stroke-width="4" fill="#fff" stroke-linecap="round"/>
+  <path d="M44 56 L45 61 M54 56 L54 61" stroke="#111" stroke-width="2.5"/>
+  <circle cx="24" cy="46" r="4" fill="#ff7a6e" opacity=".8"/><circle cx="77" cy="44" r="4" fill="#ff7a6e" opacity=".8"/>
+</svg>`;
+const mascotHTML = () => PUPPET_IMAGE ? `<img src="${PUPPET_IMAGE.replace(/"/g,"&quot;")}" alt="">` : PUPPET_SVG;
+
+const $ = s => document.querySelector(s);
+$("#mascot").innerHTML = mascotHTML();
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch{ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
+};
+
+/* ---------- Topics, briefing and feed ----------
+   The local server does the work: /api/news merges the headlines, /api/brief asks your local AI model. */
+const FALLBACK_TOPICS = [
+  {id:"chips",label:"Chips",emoji:"🔌"},{id:"crypto",label:"Crypto",emoji:"🪙"},{id:"tech",label:"Tech market",emoji:"📈"},
+  {id:"ai",label:"AI",emoji:"🤖"},{id:"macro",label:"Rates & economy",emoji:"🏦"},{id:"trade",label:"Trade & geopolitics",emoji:"🌍"},
+  {id:"energy",label:"Energy",emoji:"⚡"},{id:"evs",label:"EVs & batteries",emoji:"🔋"},{id:"gaming",label:"Gaming",emoji:"🎮"},
+  {id:"ordinals",label:"Ordinals & NFTs",emoji:"🧡"}];
+let TOPICS = FALLBACK_TOPICS, MAX = 5;
+const label = id => TOPICS.find(t => t.id === id)?.label || id;
+const emoji = id => TOPICS.find(t => t.id === id)?.emoji || "";
+
+const fromUrl = new URLSearchParams(location.search).get("t");
+let chosen = (fromUrl ? fromUrl.split(",") : store.get("pf.topics", ["chips","crypto","tech"])).filter(Boolean);
+let news = null, filter = "all", showAll = false, briefData = null;
+let newsCtl = null, briefCtl = null, debounce = 0;
+let engines = [], ai = store.get("pf.ai", {engine:"", model:""}), writing = false;
+
+const ago = t => {
+  if (!t) return "";
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
+};
+const status = (msg, err) => `<div class="status ${err ? "err" : ""}"><span class="mascot">${mascotHTML()}</span><span>${esc(msg)}</span></div>`;
+const tagFor = id => `<span class="tag">${esc(emoji(id))} ${esc(label(id))}</span>`;
+const safeUrl = u => /^https?:\/\//i.test(u || "") ? u : "#";
+
+function renderTopics(){
+  $("#topics").innerHTML = TOPICS.map(t => {
+    const on = chosen.includes(t.id);
+    return `<button class="topic" type="button" data-id="${esc(t.id)}" aria-pressed="${on}" ${!on && chosen.length >= MAX ? "disabled" : ""}>${esc(t.emoji)} ${esc(t.label)}</button>`;
+  }).join("");
+  $("#topicCount").textContent = `(${chosen.length} of up to ${MAX})`;
+}
+$("#topics").addEventListener("click", e => {
+  const b = e.target.closest(".topic"); if (!b || b.disabled) return;
+  const id = b.dataset.id;
+  chosen = chosen.includes(id) ? chosen.filter(x => x !== id) : [...chosen, id];
+  store.set("pf.topics", chosen);
+  const q = chosen.length ? `?t=${chosen.slice().sort().join(",")}` : location.pathname;
+  history.replaceState(null, "", q + location.hash);
+  renderTopics();
+  clearTimeout(debounce);
+  debounce = setTimeout(refresh, 700);   // wait for the user to finish toggling
+});
+
+function refresh(){
+  filter = "all"; showAll = false;
+  if (!chosen.length){
+    $("#brief").innerHTML = status("Pick at least one topic above - three or more is where it gets interesting.");
+    $("#stories").innerHTML = ""; $("#feedbar").innerHTML = "";
+    return;
+  }
+  loadNews(); loadBrief(false, true);
+}
+
+function noServer(){
+  return location.protocol === "file:" ? "Start the app with \"Start News Briefing\" - opening the HTML file directly won't work." : "";
+}
+
+/* ----- news list ----- */
+async function loadNews(){
+  newsCtl?.abort(); newsCtl = new AbortController();
+  $("#stories").innerHTML = `<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton" style="width:70%"></div>`;
+  $("#feedbar").innerHTML = "";
+  if (noServer()){ $("#stories").innerHTML = status(noServer(), true); return; }
+  try{
+    const res = await fetch(`/api/news?topics=${chosen.slice().sort().join(",")}`, {signal: newsCtl.signal});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Couldn't load the news.");
+    news = data; renderNews();
+  }catch(e){
+    if (e.name !== "AbortError") $("#stories").innerHTML = status(e.message || "Couldn't load the news.", true);
+  }
+}
+
+function renderNews(){
+  if (!news) return;
+  const ids = news.topics;
+  const cross = s => s.topics.filter(t => ids.includes(t)).length > 1;
+  const filters = [["all","All"], ["x","⇄ Crossovers"], ...ids.map(id => [id, `${emoji(id)} ${label(id)}`])];
+  $("#feedbar").innerHTML = filters.map(([k, l]) => `<button class="filt" data-f="${esc(k)}" aria-pressed="${filter === k}">${esc(l)}</button>`).join("");
+  let list = news.items.filter(s => filter === "all" || (filter === "x" ? cross(s) : s.topics.includes(filter)));
+  const total = list.length;
+  if (!showAll) list = list.slice(0, 30);
+  $("#stories").innerHTML = (list.length ? list.map(s => `
+    <article class="story ${cross(s) ? "x" : ""}" id="story-${s.id}">
+      <a class="t" href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>
+      <div class="info"><span>${esc(s.sources[0])}${s.sources.length > 1 ? ` +${s.sources.length - 1}` : ""}</span><span>${esc(ago(s.date))}</span>
+        ${s.topics.filter(t => ids.includes(t)).map(tagFor).join("")}</div>
+    </article>`).join("") : `<p class="empty">No stories here yet.</p>`)
+    + (news.failed?.length ? `<p class="empty">Couldn't reach the news for: ${news.failed.map(label).map(esc).join(", ")}.</p>` : "")
+    + (!showAll && total > 30 ? `<button class="btn more-btn" id="moreBtn">Show all ${total}</button>` : "");
+  $("#moreBtn")?.addEventListener("click", () => { showAll = true; renderNews(); });
+}
+$("#feedbar").addEventListener("click", e => {
+  const b = e.target.closest(".filt"); if (!b) return;
+  filter = b.dataset.f; showAll = false; renderNews();
+});
+
+/* ----- briefing (streamed progress lines) ----- */
+function briefIdle(){
+  const ready = ai.engine && ai.model;
+  $("#brief").innerHTML = `<div class="intro">
+    <h2>Your briefing</h2>
+    <p>${ready ? `Ready to write a briefing on ${chosen.map(id => esc(emoji(id) + " " + label(id))).join(" + ")} with <b>${esc(ai.model)}</b>.`
+                : "Choose your local AI model above to write briefings."}
+      It runs on your computer, so it's free - and it can take a minute or two on bigger models.</p>
+    <p><button class="btn primary" id="writeBtn" ${ready ? "" : "disabled"}>Write briefing</button></p></div>`;
+  $("#writeBtn").onclick = () => loadBrief(false);
+}
+
+async function loadBrief(fresh, cacheOnly){
+  briefCtl?.abort(); briefCtl = new AbortController();
+  briefData = null;
+  const box = $("#brief");
+  const loading = msg => box.innerHTML = status(msg) + `<div class="skeleton" style="width:80%"></div><div class="skeleton"></div><div class="skeleton" style="width:60%"></div>
+    <p><button class="btn" id="stopBtn">Stop</button></p>`;
+  if (noServer()){ box.innerHTML = status(noServer(), true); return; }
+  if (cacheOnly) box.innerHTML = status("Checking for a recent briefing...");
+  else { loading("Getting your briefing..."); $("#stopBtn").onclick = () => { briefCtl.abort(); briefIdle(); }; }
+  writing = !cacheOnly; renderAiBar();
+  try{
+    const q = new URLSearchParams({topics: chosen.slice().sort().join(","), engine: ai.engine, model: ai.model});
+    if (fresh) q.set("fresh", "1");
+    if (cacheOnly) q.set("cacheonly", "1");
+    const res = await fetch(`/api/brief?${q}`, {signal: briefCtl.signal});
+    if (!res.ok || !res.body){
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || (res.status === 404 ? "Briefings aren't set up on this site yet." : "Couldn't get the briefing."));
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "", done = false;
+    while (!done){
+      const r = await reader.read();
+      if (r.done) break;
+      buf += dec.decode(r.value, {stream:true});
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0){
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let msg; try{ msg = JSON.parse(line); }catch{ continue; }
+        if (msg.none){ briefIdle(); done = true; break; }
+        if (msg.status){ loading(msg.status); $("#stopBtn").onclick = () => { briefCtl.abort(); briefIdle(); }; }
+        if (msg.error) throw new Error(msg.error);
+        if (msg.result){ briefData = msg.result; renderBrief(); done = true; }
+      }
+    }
+    if (!done) throw new Error("The briefing was cut short. Try again.");
+  }catch(e){
+    if (e.name !== "AbortError"){
+      box.innerHTML = status(e.message || "Couldn't get the briefing.", true) +
+        `<p style="margin-top:12px"><button class="btn" id="retryBrief">Try again</button></p>`;
+      $("#retryBrief").onclick = () => loadBrief(true);
+    }
+  }
+  writing = false; renderAiBar();
+}
+
+/* ----- local AI picker ----- */
+async function loadEngines(){
+  try{ engines = (await (await fetch("/api/engines")).json()).engines || []; }catch{ engines = []; }
+  const all = engines.flatMap(e => e.models.map(m => ({engine: e.engine, model: m})));
+  if (!all.some(o => o.engine === ai.engine && o.model === ai.model)){
+    ai = all[0] || {engine:"", model:""}; store.set("pf.ai", ai);
+  }
+  renderAiBar();
+}
+function renderAiBar(){
+  const bar = $("#aibar");
+  const opts = engines.flatMap(e => e.models.map(m => `<option value="${esc(e.engine + "|" + m)}" ${e.engine === ai.engine && m === ai.model ? "selected" : ""}>${esc(m)} · ${esc(e.name)}</option>`));
+  if (!engines.length){
+    bar.innerHTML = `<span><span class="dot"></span>No local AI found.</span>
+      <span class="grow">Open <b>LM Studio</b> and switch on its server (Settings → Local Model API), or open <b>Ollama</b>.
+        Don't have one? Both are free: <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> ·
+        <a href="https://ollama.com/download" target="_blank" rel="noopener">Ollama</a>. The news feed works without it.</span>
+      <button class="btn" id="rescan">Check again</button>`;
+  } else if (!opts.length){
+    bar.innerHTML = `<span><span class="dot on"></span>${esc(engines.map(e => e.name).join(" + "))} found, but no model is loaded.</span>
+      <span class="grow">In LM Studio, load a model (e.g. your Qwen 27B). In Ollama, run <code>ollama pull qwen3</code>.</span>
+      <button class="btn" id="rescan">Check again</button>`;
+  } else {
+    bar.innerHTML = `<span><span class="dot on"></span>Local AI:</span>
+      <select id="modelSel" aria-label="AI model" ${writing ? "disabled" : ""}>${opts.join("")}</select>
+      <span class="grow"></span>
+      ${briefData ? `<button class="btn" id="rewrite" ${writing ? "disabled" : ""}>Rewrite</button>` : ""}
+      <button class="btn" id="rescan" ${writing ? "disabled" : ""}>Refresh list</button>`;
+    $("#modelSel").onchange = e => { const [engine, ...m] = e.target.value.split("|"); ai = {engine, model: m.join("|")}; store.set("pf.ai", ai); if (!briefData) briefIdle(); };
+    $("#rewrite")?.addEventListener("click", () => loadBrief(true));
+  }
+  $("#rescan")?.addEventListener("click", async () => { await loadEngines(); if (!briefData && !writing) briefIdle(); });
+}
+
+function renderBrief(){
+  const d = briefData, b = d.brief, ids = d.topics;
+  renderAiBar();
+  const ref = n => {
+    const r = d.refs?.[n]; if (!r) return "";
+    return `<a class="ref" href="${esc(safeUrl(r.url))}" target="_blank" rel="noopener noreferrer" title="${esc(r.title)} (${esc(r.source)})">${n}</a>`;
+  };
+  const refs = list => (list || []).map(ref).join("");
+  const prices = (d.prices || []).map(p => `<span class="price">${esc(p.symbol)} $${Number(p.usd).toLocaleString("en-US", {maximumFractionDigits: p.usd < 10 ? 2 : 0})}
+      <span class="${p.change24h >= 0 ? "up" : "down"}">${p.change24h >= 0 ? "▲" : "▼"} ${Math.abs(p.change24h)}%</span></span>`).join("");
+  $("#brief").innerHTML = `
+    <div class="brief-meta"><span>${ids.map(id => esc(emoji(id) + " " + label(id))).join(" + ")}</span>
+      <span>${esc(d.model || "")} · written ${esc(ago(d.at))}</span></div>
+    <h2>${esc(b.headline)}</h2>
+    ${prices ? `<div class="prices">${prices}</div>` : ""}
+    <p class="overview">${esc(b.overview)}</p>
+    ${b.mood?.length ? `<div class="moods">${b.mood.map(m => `<div class="mood"><b>${esc(emoji(m.topic) + " " + label(m.topic))}<span class="tone ${esc(m.tone)}">${esc(m.tone)}</span></b>${esc(m.why)}</div>`).join("")}</div>` : ""}
+    <h3>How it connects</h3>
+    ${b.threads.map(t => `<div class="thread"><h4>${esc(t.title)}</h4><p>${esc(t.body)}</p>
+      <div class="tags">${t.topics.map(tagFor).join("")}${refs(t.refs)}</div></div>`).join("")}
+    ${b.outlook?.length ? `<h3>What to watch</h3>
+    ${b.outlook.map(o => `<div class="scenario"><h4>${esc(o.scenario)}</h4>
+      <div class="tags"><span class="lik ${esc(o.likelihood)}">${esc(o.likelihood)} likelihood</span><span class="when">${esc(o.timeframe)}</span></div>
+      <p>${esc(o.reasoning)}</p>
+      ${o.signals?.length ? `<ul class="signals">${o.signals.map(s => `<li>${esc(s)}</li>`).join("")}</ul>` : ""}
+      <div class="tags">${refs(o.refs)}</div></div>`).join("")}` : ""}
+    ${b.upcoming?.length ? `<h3>Coming up</h3><ul class="upcoming">${b.upcoming.map(u => `<li><b>${esc(u.when)}</b><span>${esc(u.what)}</span></li>`).join("")}</ul>` : ""}
+    <p class="disclaimer">Written by your local AI model from the headlines in the feed - the numbers link to the stories it used.
+      Scenarios are possibilities to watch, not predictions, and nothing here is financial advice.</p>`;
+}
+
+async function loadTopicList(){
+  if (noServer()) return;
+  try{
+    const r = await fetch("/api/topics");
+    if (r.ok){ const d = await r.json(); if (d.topics?.length){ TOPICS = d.topics; MAX = d.max || MAX; } }
+  }catch{}
+}
+
+$("#quitBtn").onclick = async () => {
+  if (!confirm("Close Puppet Feeds Local? You can start it again any time.")) return;
+  try{ await fetch("/api/quit", {method:"POST"}); }catch{}
+  document.body.innerHTML = '<div class="wrap" style="padding:40px 16px"><div class="status">Puppet Feeds Local has stopped. You can close this tab.</div></div>';
+};
+/* ---------- Start ---------- */
+(async () => {
+  renderTopics();
+  await loadTopicList();
+  chosen = chosen.filter(id => TOPICS.some(t => t.id === id)).slice(0, MAX);
+  renderTopics();
+  await loadEngines();
+  refresh();
+})();
+</script>
+</body>
+</html>

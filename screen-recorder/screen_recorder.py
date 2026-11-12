@@ -7,7 +7,9 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -19,6 +21,14 @@ from tkinter import filedialog, messagebox, ttk
 
 APP_NAME = "Screen Recorder & Editor"
 WINDOWS = os.name == "nt"
+LINUX = sys.platform.startswith("linux")
+if LINUX:
+    import linux_support as lx
+    WAYLAND = lx.is_wayland()
+else:
+    lx = None
+    WAYLAND = False
+HOTKEY_HINT = "Press F9 to start and stop from anywhere." if WINDOWS else "Press F9 in this window to start and stop."
 NOWIN = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
 VIDEO_EXT = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".m4v", ".flv", ".mpg", ".mpeg")
 CRF = {"High": "18", "Balanced": "23", "Small file": "28"}
@@ -104,8 +114,19 @@ def probe(ffmpeg, path):
     return info
 
 
-def list_audio_devices(ffmpeg):
-    """Names of the sound inputs Windows offers (microphones, Stereo Mix and so on)."""
+AUDIO_IDS = {}  # label shown in the list -> the name FFmpeg/GStreamer needs (Linux)
+
+
+def list_audio_devices(ffmpeg, kind="all"):
+    """Names of the sound inputs on offer. On Linux, kind picks "mic" or "system" (what you hear)."""
+    if LINUX:
+        found = lx.audio_sources()
+        AUDIO_IDS.update({label: name for label, name, _ in found})
+        if kind == "mic":
+            return [label for label, _, mon in found if not mon]
+        if kind == "system":
+            return [label for label, _, mon in found if mon]
+        return [label for label, _, _ in found]
     if not WINDOWS:
         return []
     r = subprocess.run([ffmpeg, "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
@@ -129,7 +150,7 @@ def even(n):
     return int(n) // 2 * 2
 
 
-def record_command(ffmpeg, out, region=None, fps=30, quality="Balanced", audio=(), mouse=True):
+def record_command(ffmpeg, out, region=None, fps=30, quality="Balanced", audio=(), mouse=True, screen=None):
     """region is None for the whole desktop, or (x, y, width, height)."""
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
     if WINDOWS:
@@ -140,13 +161,12 @@ def record_command(ffmpeg, out, region=None, fps=30, quality="Balanced", audio=(
         cmd += ["-i", "desktop"]
         for name in audio:
             cmd += ["-f", "dshow", "-thread_queue_size", "1024", "-i", f"audio={name}"]
-    else:  # used for testing on Linux
-        if not region:
-            raise ValueError("Select an area to record.")
-        x, y, w, h = region
+    else:  # Linux with an X11 desktop
+        x, y, w, h = region or screen or (0, 0, 1920, 1080)
         cmd += ["-f", "x11grab", "-framerate", str(fps), "-draw_mouse", "1" if mouse else "0",
                 "-video_size", f"{even(w)}x{even(h)}", "-i", f"{os.environ.get('DISPLAY', ':0')}+{x},{y}"]
-        audio = ()
+        for name in audio:
+            cmd += ["-f", "pulse", "-thread_queue_size", "1024", "-i", AUDIO_IDS.get(name, name)]
     if len(audio) > 1:
         mix = "".join(f"[{i + 1}:a]" for i in range(len(audio)))
         cmd += ["-filter_complex", f"{mix}amix=inputs={len(audio)}:duration=longest[a]", "-map", "0:v", "-map", "[a]"]
@@ -158,7 +178,10 @@ def record_command(ffmpeg, out, region=None, fps=30, quality="Balanced", audio=(
     return cmd + [str(out)]
 
 
-def remux_command(ffmpeg, src, dst):
+def remux_command(ffmpeg, src, dst, audio_to_aac=False):
+    if audio_to_aac:  # Wayland recordings use Opus sound; AAC plays everywhere
+        return [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-c:v", "copy", "-c:a", "aac",
+                "-b:a", "160k", "-movflags", "+faststart", str(dst)]
     return [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-c", "copy",
             "-movflags", "+faststart", str(dst)]
 
@@ -317,6 +340,11 @@ class App:
         root.title(APP_NAME)
         root.geometry("860x720")
         root.minsize(760, 620)
+        if LINUX:
+            try:
+                ttk.Style().theme_use("clam")  # cleaner than Tk's default look on Linux
+            except tk.TclError:
+                pass
         try:
             ttk.Style().configure("Big.TButton", font=("Segoe UI", 11, "bold"), padding=8)
         except tk.TclError:
@@ -341,6 +369,8 @@ class App:
         root.after(60, self.pump)
         if WINDOWS:
             threading.Thread(target=self.hotkey_loop, daemon=True).start()
+        else:  # Linux desktops don't allow global hotkeys from apps, so F9 works while this window is focused
+            root.bind_all("<F9>", lambda e: self.record.toggle())
 
     def ui(self, fn):
         self.inbox.put(fn)
@@ -370,8 +400,18 @@ class App:
 
     def check_ffmpeg(self):
         self.ffmpeg = ffmpeg_path()
+        missing = lx.missing_tools(WAYLAND) if LINUX else []
+        if LINUX and missing:
+            self.ff_label.config(text=f"Some parts are missing: {', '.join(missing)}. Click Install for the command.",
+                                 foreground="#b3261e")
+            self.ff_btn.config(text="Install")
+            self.ff_btn.pack(side="right")
+            return None if "ffmpeg" in missing else self.ffmpeg
         if self.ffmpeg:
-            self.ff_label.config(text="FFmpeg is installed and ready.", foreground="#1c7548")
+            ready = "FFmpeg is installed and ready."
+            if LINUX:
+                ready = f"Ready to record ({'Wayland' if WAYLAND else 'X11'} desktop)."
+            self.ff_label.config(text=ready, foreground="#1c7548")
             self.ff_btn.pack_forget()
         else:
             self.ff_label.config(text="FFmpeg is needed to record and edit. Install it once, then click Check again.",
@@ -380,8 +420,18 @@ class App:
         return self.ffmpeg
 
     def install_ffmpeg(self):
-        if self.check_ffmpeg():
+        if self.check_ffmpeg() and not (LINUX and lx.missing_tools(WAYLAND)):
             self.record.refresh_devices()
+            return
+        if LINUX:
+            here = Path(__file__).resolve().parent
+            script = here / "install-linux.sh"
+            cmd = f'bash "{script}"' if script.exists() else "sudo apt install " + " ".join(lx.APT_PACKAGES)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(cmd)
+            messagebox.showinfo(APP_NAME, "Open a terminal and run this command (it's been copied for you, "
+                                          f"paste with Ctrl+Shift+V):\n\n{cmd}\n\nThen click Check again.")
+            self.ff_btn.config(text="Check again")
             return
         if not WINDOWS or not shutil.which("winget"):
             messagebox.showinfo(APP_NAME, "Install FFmpeg from ffmpeg.org, then restart this app.")
@@ -433,17 +483,26 @@ class RecordTab:
         f = self.frame = ttk.Frame(app.nb, padding=14)
         f.columnconfigure(0, weight=1)
 
-        ttk.Label(f, text="Record the whole screen or just part of it. Press F9 to start and stop from anywhere.",
+        intro = "Record the whole screen or just part of it. " + HOTKEY_HINT
+        if WAYLAND:
+            intro = ("Record a whole screen or one window. When you start, your desktop asks what to share — "
+                     "that's normal on Wayland. " + HOTKEY_HINT)
+        ttk.Label(f, text=intro,
                   wraplength=780, justify="left").grid(row=0, column=0, sticky="w", pady=(0, 10))
 
         area = ttk.LabelFrame(f, text="What to record", padding=10)
         area.grid(row=1, column=0, sticky="ew")
         self.area_mode = tk.StringVar(value="full")
         ttk.Radiobutton(area, text="Whole screen", variable=self.area_mode, value="full").grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(area, text="Part of the screen", variable=self.area_mode, value="part").grid(row=0, column=1, sticky="w", padx=(16, 6))
-        ttk.Button(area, text="Select area", command=self.select_area).grid(row=0, column=2)
-        self.area_label = ttk.Label(area, text="No area selected yet.", foreground="#666")
-        self.area_label.grid(row=0, column=3, padx=10)
+        if WAYLAND:
+            ttk.Radiobutton(area, text="One window", variable=self.area_mode, value="window").grid(row=0, column=1, sticky="w", padx=(16, 6))
+            self.area_label = ttk.Label(area, text="You pick which screen or window in your desktop's sharing dialog.", foreground="#666")
+            self.area_label.grid(row=0, column=3, padx=10)
+        else:
+            ttk.Radiobutton(area, text="Part of the screen", variable=self.area_mode, value="part").grid(row=0, column=1, sticky="w", padx=(16, 6))
+            ttk.Button(area, text="Select area", command=self.select_area).grid(row=0, column=2)
+            self.area_label = ttk.Label(area, text="No area selected yet.", foreground="#666")
+            self.area_label.grid(row=0, column=3, padx=10)
 
         opts = ttk.LabelFrame(f, text="Picture", padding=10)
         opts.grid(row=2, column=0, sticky="ew", pady=10)
@@ -454,12 +513,16 @@ class RecordTab:
 
         snd = ttk.LabelFrame(f, text="Sound", padding=10)
         snd.grid(row=3, column=0, sticky="ew")
-        self.mic, self.mic_box = combo(snd, "Microphone", [NONE], NONE, 0, width=38)
-        self.sys, self.sys_box = combo(snd, "Computer sound", [NONE], NONE, 1, width=38)
+        dev_w = 32 if LINUX else 38
+        self.mic, self.mic_box = combo(snd, "Microphone", [NONE], NONE, 0, width=dev_w)
+        self.sys, self.sys_box = combo(snd, "Computer sound", [NONE], NONE, 1, width=dev_w)
         ttk.Button(snd, text="Refresh list", command=self.refresh_devices).grid(row=0, column=2, sticky="s", pady=4)
-        ttk.Label(snd, foreground="#666", wraplength=780, justify="left",
-                  text="Computer sound needs a device called Stereo Mix (or similar) switched on in Windows Sound settings, "
-                       "under Recording devices. If it is not in the list, only the microphone can be recorded."
+        snd_hint = ("Computer sound needs a device called Stereo Mix (or similar) switched on in Windows Sound settings, "
+                    "under Recording devices. If it is not in the list, only the microphone can be recorded.")
+        if LINUX:
+            snd_hint = ("Computer sound records what's playing through your speakers or headphones "
+                        "(listed as \"Monitor of ...\"). Pick the one you're listening on.")
+        ttk.Label(snd, foreground="#666", wraplength=780, justify="left", text=snd_hint
                   ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         beh = ttk.Frame(f)
@@ -470,7 +533,7 @@ class RecordTab:
         ttk.Checkbutton(beh, text="3 second countdown", variable=self.countdown).grid(row=0, column=0)
         ttk.Checkbutton(beh, text="Minimise this window while recording", variable=self.minimise).grid(row=0, column=1, padx=16)
         ttk.Label(beh, text="Save to:").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        self.outdir = tk.StringVar(value=str(Path.home() / "Videos" / "Screen Recordings"))
+        self.outdir = tk.StringVar(value=str((lx.videos_dir() if LINUX else Path.home() / "Videos") / "Screen Recordings"))
         ttk.Entry(beh, textvariable=self.outdir).grid(row=1, column=1, columnspan=3, sticky="ew", pady=(8, 0))
         ttk.Button(beh, text="Browse", command=self.browse).grid(row=1, column=4, padx=(6, 0), pady=(8, 0))
 
@@ -499,8 +562,11 @@ class RecordTab:
 
     def refresh_devices(self):
         ff = self.app.ffmpeg if hasattr(self.app, "ffmpeg") else ffmpeg_path()
-        devices = list_audio_devices(ff) if ff else []
-        for var, box in ((self.mic, self.mic_box), (self.sys, self.sys_box)):
+        for var, box, kind in ((self.mic, self.mic_box, "mic"), (self.sys, self.sys_box, "system")):
+            if LINUX:
+                devices = list_audio_devices(ff, kind)
+            else:
+                devices = list_audio_devices(ff) if ff else []
             box.config(values=[NONE] + devices)
             if var.get() not in devices:
                 var.set(NONE)
@@ -572,13 +638,38 @@ class RecordTab:
         except OSError as e:
             messagebox.showwarning(APP_NAME, f"Could not use that save folder: {e}")
             return
-        cmd = record_command(ff, self.raw, region, int(self.fps.get()), self.quality.get(), audio, self.mouse.get())
         self.counting = True
         self.btn.config(state="disabled")
         for b in (self.play_btn, self.folder_btn, self.edit_btn):
             b.config(state="disabled")
         self.status.config(text="", foreground="")
+        if WAYLAND:
+            self.start_wayland(audio)
+            return
+        screen = virtual_screen(self.app.root) if LINUX and not region else None
+        cmd = record_command(ff, self.raw, region, int(self.fps.get()), self.quality.get(), audio, self.mouse.get(), screen)
         self.count(3 if self.countdown.get() else 0, cmd)
+
+    def start_wayland(self, audio):
+        """Ask the desktop for a screen or window first (it shows its own dialog), then count down."""
+        self.timer.config(text="Choose what to share...")
+        window = self.area_mode.get() == "window"
+        mouse = self.mouse.get()
+        cast = lx.ScreenCast()
+        audio = [AUDIO_IDS.get(a, a) for a in audio]
+
+        def done(result, error):
+            def ui():
+                if error:
+                    self.counting = False
+                    self.failed(str(error))
+                    return
+                self.cast = result
+                cmd = lx.gst_command(result, self.raw, int(self.fps.get()), self.quality.get(), audio)
+                self.count(3 if self.countdown.get() else 0, cmd)
+            self.app.ui(ui)
+
+        lx.run_in_thread(lambda: cast.open(window=window, cursor=mouse), done)
 
     def count(self, n, cmd):
         if n > 0:
@@ -591,8 +682,10 @@ class RecordTab:
             self.app.root.update()
             time.sleep(0.4)  # let the window finish minimising so it is not in the first frames
         self.errfile = tempfile.TemporaryFile()
+        extra = {"pass_fds": (self.cast.fd,)} if WAYLAND and getattr(self, "cast", None) else {}
         try:
-            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self.errfile, creationflags=NOWIN)
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self.errfile,
+                                         creationflags=NOWIN, **extra)
         except OSError as e:
             self.failed(str(e))
             return
@@ -603,7 +696,12 @@ class RecordTab:
     def tick(self):
         if not self.proc:
             return
-        if self.proc.poll() is not None:  # FFmpeg stopped by itself: something went wrong
+        if self.proc.poll() is not None:  # the recorder stopped by itself
+            raw = Path(self.raw)
+            if raw.exists() and raw.stat().st_size > 64 * 1024 and time.time() - self.started > 2:
+                # e.g. "Stop sharing" was clicked in the desktop's own panel: keep what was recorded
+                self.stop()
+                return
             self.errfile.seek(0)
             lines = self.errfile.read().decode("utf-8", "replace").strip().splitlines()
             self.proc = None
@@ -613,7 +711,13 @@ class RecordTab:
         self.timer.config(text="REC  " + fmt_time(time.time() - self.started))
         self.app.root.after(250, self.tick)
 
+    def close_cast(self):
+        cast, self.cast = getattr(self, "cast", None), None
+        if cast:
+            cast.close()
+
     def failed(self, reason):
+        self.close_cast()
         self.app.root.deiconify()
         self.timer.config(text="")
         self.btn.config(text="Start recording (F9)", state="normal")
@@ -630,10 +734,15 @@ class RecordTab:
         ff = self.app.ffmpeg
         raw = Path(self.raw)
 
+        gst = WAYLAND
+
         def finish():
             try:
-                proc.stdin.write(b"q")  # asks FFmpeg to finish the file properly
-                proc.stdin.flush()
+                if gst:
+                    proc.send_signal(signal.SIGINT)  # with -e, GStreamer finishes the file properly
+                else:
+                    proc.stdin.write(b"q")  # asks FFmpeg to finish the file properly
+                    proc.stdin.flush()
             except OSError:
                 pass
             try:
@@ -641,10 +750,12 @@ class RecordTab:
             except subprocess.TimeoutExpired:
                 proc.terminate()
                 proc.wait()
+            self.app.ui(self.close_cast)
             final, note = raw, ""
             if raw.exists() and raw.stat().st_size > 0:
                 mp4 = unique_path(raw.parent, raw.stem, ".mp4")
-                r = subprocess.run(remux_command(ff, raw, mp4), capture_output=True, creationflags=NOWIN, stdin=subprocess.DEVNULL)
+                r = subprocess.run(remux_command(ff, raw, mp4, audio_to_aac=gst), capture_output=True, creationflags=NOWIN,
+                                   stdin=subprocess.DEVNULL)
                 if r.returncode == 0 and mp4.exists() and mp4.stat().st_size > 0:
                     raw.unlink(missing_ok=True)
                     final = mp4
@@ -952,7 +1063,7 @@ def main():
             ctypes.windll.shcore.SetProcessDpiAwareness(2)
         except Exception:
             pass
-    root = tk.Tk()
+    root = tk.Tk(className="screen-recorder") if LINUX else tk.Tk()
     App(root)
     root.mainloop()
 

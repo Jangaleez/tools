@@ -6,6 +6,7 @@ Free, home-grown tools by [Jangaleez](https://github.com/Jangaleez) for **Window
 |---|---|---|---|
 | **PC Care Kit** | A tabbed app for PC health and maintenance: startup apps, cleanup, disk space, updates and repairs | [pc-care-kit](pc-care-kit/) (no install needed) | [pc-care-kit-linux](pc-care-kit-linux/) |
 | **Screen Recorder & Editor** | Record the screen, then trim, cut, speed up, rotate or join videos | [screen-recorder](screen-recorder/) | Same folder: run `install-linux.sh` |
+| **Cold Key Generator** | Bitcoin, Ethereum and Solana seed phrases made on an offline Tails USB stick, using Bitcoin Core, the Solana CLI and the BIP39 reference code | Prepares the bundle | Generates the phrases (Tails) |
 
 ## Downloading
 

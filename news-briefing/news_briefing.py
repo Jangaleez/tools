@@ -26,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "Puppet Feeds Local"
+VERSION = "1.2"
 HERE = Path(__file__).resolve().parent
 PORT = int(os.environ.get("NEWS_BRIEFING_PORT", "8765"))
 DATA = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "puppet-feeds-local"
@@ -364,10 +365,12 @@ def ask_local_ai(engine, model, prompt, progress):
                 "options": {"temperature": 0.4, "num_ctx": 8192}}
     else:
         url = base + "/v1/chat/completions"
-        body = {"model": model, "messages": messages, "stream": True, "temperature": 0.4, "max_tokens": 2500,
-                "response_format": {"type": "json_schema", "json_schema": {"name": "briefing", "schema": SCHEMA}}}
+        body = {"model": model, "messages": messages, "stream": True, "temperature": 0.4, "max_tokens": 8000,
+                "response_format": {"type": "json_schema", "json_schema": {"name": "briefing", "schema": SCHEMA}},
+                # Thinking models (Qwen3.x etc.) would otherwise spend most of the budget thinking first.
+                "chat_template_kwargs": {"enable_thinking": False}}
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
-    text = ""
+    text, thinking, finish = "", 0, None
     try:
         with urllib.request.urlopen(req, timeout=600) as resp:
             for line in _stream_lines(resp):
@@ -380,7 +383,11 @@ def ask_local_ai(engine, model, prompt, progress):
                         continue
                     if msg.get("error"):
                         raise UserError(f"Ollama: {msg['error']}")
-                    text += (msg.get("message") or {}).get("content") or ""
+                    m = msg.get("message") or {}
+                    text += m.get("content") or ""
+                    thinking += len(m.get("thinking") or "")
+                    if msg.get("done_reason") == "length":
+                        finish = "length"
                 else:
                     if not line.startswith("data:"):
                         continue
@@ -388,11 +395,14 @@ def ask_local_ai(engine, model, prompt, progress):
                     if payload == "[DONE]":
                         break
                     try:
-                        delta = (json.loads(payload).get("choices") or [{}])[0].get("delta") or {}
+                        choice = (json.loads(payload).get("choices") or [{}])[0]
                     except ValueError:
                         continue
+                    delta = choice.get("delta") or {}
                     text += delta.get("content") or ""
-                progress(len(text))
+                    thinking += len(delta.get("reasoning_content") or delta.get("reasoning") or "")
+                    finish = choice.get("finish_reason") or finish
+                progress(len(text), thinking)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:300]
         if "context" in detail.lower() or "too long" in detail.lower():
@@ -401,7 +411,22 @@ def ask_local_ai(engine, model, prompt, progress):
         raise UserError(f"{ENGINES[engine]['name']} said: {detail or e.reason}")
     except urllib.error.URLError:
         raise UserError(f"Couldn't reach {ENGINES[engine]['name']}. Is it open, with its local server running?")
+    finally:
+        _save_last(engine, model, text, thinking, finish)
+    if finish == "length":
+        raise UserError("The model ran out of room before finishing the briefing. Try again, or pick fewer topics.")
     return text
+
+
+def _save_last(engine, model, text, thinking, finish):
+    """Keeps the model's last raw answer, to help work out what went wrong if a briefing fails."""
+    try:
+        DATA.mkdir(parents=True, exist_ok=True)
+        (DATA / "last-response.txt").write_text(
+            f"{time.strftime('%Y-%m-%d %H:%M:%S')} | {engine} | {model} | finish={finish} | thinking chars={thinking}\n\n{text}",
+            encoding="utf-8")
+    except OSError:
+        pass
 
 
 def extract_json(text):
@@ -416,7 +441,8 @@ def extract_json(text):
                 return json.loads(text[start:end + 1])
             except ValueError:
                 pass
-    raise UserError("The model's answer wasn't valid JSON. Try again, or pick a bigger model.")
+    raise UserError("The model's answer wasn't in the expected format. Try again. "
+                    f"(Its raw answer is saved in {DATA / 'last-response.txt'})")
 
 
 def clean(b, ids, max_ref):
@@ -496,6 +522,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif url.path == "/api/version":
+                self._json({"app": APP, "version": VERSION})
             elif url.path == "/api/topics":
                 self._json({"topics": [{"id": k, "label": v[0], "emoji": v[1]} for k, v in TOPICS.items()], "max": MAX_TOPICS})
             elif url.path == "/api/engines":
@@ -553,6 +581,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if engine not in ENGINES or not model:
                 raise UserError("Choose a local AI model first (LM Studio or Ollama).")
+            if engine == "lmstudio":
+                detect_engines()  # finds which port LM Studio is on (1234 or 1235) before asking it
             send({"status": "Reading the latest headlines..."})
             items, _ = get_news(ids)
             prices = get_prices(ids)
@@ -561,10 +591,13 @@ class Handler(BaseHTTPRequestHandler):
                             "(the first run can take a minute while the model loads)"})
             last = [0.0]
 
-            def progress(chars):
+            def progress(chars, thinking=0):
                 if time.time() - last[0] > 1:
                     last[0] = time.time()
-                    send({"status": f"{model} is writing your briefing... ({chars:,} characters so far)"})
+                    if chars:
+                        send({"status": f"{model} is writing your briefing... ({chars:,} characters so far)"})
+                    else:
+                        send({"status": f"{model} is thinking first... ({thinking:,} characters of thinking)"})
 
             text = ask_local_ai(engine, model, build_prompt(ids, items, prices), progress)
             brief = clean(extract_json(text), ids, n)
@@ -581,13 +614,48 @@ class Handler(BaseHTTPRequestHandler):
             send({"error": f"Something went wrong: {e}"})
 
 
+def _replace_running_copy():
+    """If an older version is already running, ask it to stop so this one can take over.
+    Returns True if the port is free afterwards (or was already), False if the same version is running."""
+    base = f"http://127.0.0.1:{PORT}"
+    try:
+        info = json.loads(http_get(base + "/api/version", timeout=2))
+    except urllib.error.HTTPError:
+        info = {}  # a version from before /api/version existed
+    except Exception:  # noqa: BLE001
+        return True  # nothing answering: the port is free (or used by something else - binding will tell)
+    if info.get("version") == VERSION:
+        return False
+    print(f"Replacing an older copy of {APP} that was still running...")
+    try:
+        req = urllib.request.Request(base + "/api/quit", data=b"", method="POST", headers={"Origin": base})
+        urllib.request.urlopen(req, timeout=3).read()
+    except Exception:  # noqa: BLE001
+        pass
+    for _ in range(20):
+        time.sleep(0.25)
+        try:
+            http_get(base + "/api/topics", timeout=1)
+        except Exception:  # noqa: BLE001
+            return True
+    return True
+
+
 def main():
     _load_cache()
-    try:
-        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    except OSError:
-        # Probably already running: just open it.
-        webbrowser.open(f"http://127.0.0.1:{PORT}/")
+    if not _replace_running_copy():
+        webbrowser.open(f"http://127.0.0.1:{PORT}/")  # this version is already running: just open it
+        return
+    server = None
+    for _ in range(10):
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+            break
+        except OSError:
+            time.sleep(0.5)
+    if not server:
+        print(f"Port {PORT} is in use by another program. Close it, or set NEWS_BRIEFING_PORT to another number.")
+        input("Press Enter to close...")
         return
     url = f"http://127.0.0.1:{PORT}/"
     print(f"{APP} is running at {url}")

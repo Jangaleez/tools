@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+node_modules/
+.env
+.env.*
+!.env.example
+.netlify/
+Thumbs.db
+.DS_Store
+# Recordings and edits made with the screen recorder
+*.mp4
+*.mkv

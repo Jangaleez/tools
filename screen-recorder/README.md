@@ -9,10 +9,25 @@ It runs on **Windows** and **Linux** (Debian, Ubuntu, TUXEDO OS, Kubuntu, Mint a
 | Tab | What it does |
 |---|---|
 | **Record** | Record the whole screen, part of it (Windows and Linux X11) or one window (Linux Wayland). You can set the frame rate and quality, record from a microphone and computer sound, and choose whether to show the mouse pointer |
-| **Edit** | Trim or cut out a section, change speed and rotate |
+| **Edit** | Mark the parts to delete on a filmstrip, then change speed, rotate, sound or size |
 | **Join clips** | Combine several videos into one |
 
 Edited videos are saved as new files, so your originals are never overwritten.
+
+## Editing a video
+
+The Edit tab works like the iPhone's video editor: the video is laid out as a filmstrip under the preview.
+
+- **Hover** anywhere on the filmstrip to see that moment in a pop-up snippet and in the big preview. The snippet turns red when that moment is marked for deletion.
+- **Drag across the filmstrip** to mark a part to delete. It turns red.
+- **Drag a red part's edges** to make it bigger or smaller. Drag its middle to move it.
+- **Right-click** a red part (or select it and press **Delete**) to unmark it. **Ctrl+Z** undoes.
+- **Scroll the mouse wheel** over the filmstrip to zoom in for precise cuts; **Shift + scroll** or the scrollbar moves along.
+- **Click** the filmstrip to move the playhead, and use the **arrow keys** to step through it (hold Shift for bigger steps).
+- **Preview with cuts** (or **Space**) plays from the playhead with the red parts skipped, so you can check the edit before saving.
+- You can also type exact times for the selected part.
+
+**Save edited video** joins the remaining parts into a new file next to the original, called "name edited".
 
 ## How to run on Windows
 
@@ -22,6 +37,13 @@ Edited videos are saved as new files, so your originals are never overwritten.
 3. If FFmpeg isn't installed, click the button at the top of the app. It runs `winget install Gyan.FFmpeg` for you.
 
 **F9** starts and stops recording from anywhere, even while the window is minimised.
+
+### Recording sound on Windows
+
+- **Computer sound** is set to **What this PC is playing** by default. It records whatever comes out of your speakers or headphones (games, videos, calls) straight from Windows, so Stereo Mix isn't needed. Pick **None** to record without it.
+- **Microphone** records your voice. If you choose both, they're mixed together.
+- The first time you start the app, `Run Screen Recorder.bat` installs the small part that does this (`PyAudioWPatch`). If that install fails, the app still works with a microphone or Stereo Mix.
+- If you switch speakers or headphones, the next recording uses whichever is the Windows default when you press Start.
 
 ## How to install on Linux
 

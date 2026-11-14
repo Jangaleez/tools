@@ -222,7 +222,7 @@ def gst_command(cast, out, fps=30, quality="Balanced", audio=()):
         if w % 2 or h % 2:
             cmd += ["videocrop", f"right={w % 2}", f"bottom={h % 2}", "!"]
     cmd += [f"video/x-raw,format=I420,framerate={int(fps)}/1", "!",
-           "x264enc", "speed-preset=ultrafast", "tune=zerolatency", "pass=quant", f"quantizer={qp}", "!",
+           "x264enc", "speed-preset=ultrafast", "tune=zerolatency", "pass=quant", f"quantizer={qp}", f"key-int-max={int(fps) * 2}", "!",
            "h264parse", "!", "queue", "!", "mux."]
     if audio:
         if len(audio) > 1:
